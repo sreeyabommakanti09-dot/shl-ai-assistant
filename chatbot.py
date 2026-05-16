@@ -172,15 +172,15 @@ if __name__ == "__main__":
     ]
 
     for message in test_messages:
-        print(f"\n👤 Recruiter: {message}")
+        print(f"\n Recruiter: {message}")
         print("-" * 40)
 
         result = chat(message, history, model, index, df)
 
-        print(f"🤖 Assistant: {result['response']}")
+        print(f" Assistant: {result['response']}")
 
         # Add to history for next turn
         history.append({"role": "user", "content": message})
         history.append({"role": "assistant", "content": result['response']})
 
-    print("\n✅ Chatbot test complete!")
+    print("\n Chatbot test complete!")
