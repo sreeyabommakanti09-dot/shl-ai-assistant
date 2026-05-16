@@ -93,18 +93,18 @@ async def lifespan(app: FastAPI):
     """
     global ml_model, faiss_index, assessments_df
     
-    print("🚀 Starting SHL Assessment Recommender...")
-    print("📊 Loading AI model and search index...")
+    print(" Starting SHL Assessment Recommender...")
+    print(" Loading AI model and search index...")
     
     # Initialize everything
     ml_model, faiss_index, assessments_df = initialize_search_system()
     
-    print("✅ Server ready to accept requests!")
+    print(" Server ready to accept requests!")
     
     yield  # Server runs here
     
     # Cleanup when server stops (optional)
-    print("👋 Server shutting down...")
+    print(" Server shutting down...")
 
 
 # -------------------------------------------------------
@@ -160,7 +160,7 @@ def health_check():
     }
 
 
-@app.get("/assessments")
+@app.get("/assessments",response_model=dict)
 def get_all_assessments():
     """
     Returns all SHL assessments in our database.
