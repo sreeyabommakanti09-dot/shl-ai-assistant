@@ -89,8 +89,8 @@ def home():
 def health_check():
     return {"status": "ok"}
 
-@app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(request: ChatRequest):
+@app.get("/chat", response_model=ChatResponse)
+def chat_endpoint(message:str):
     if vectorizer is None:
         raise HTTPException(
             status_code=503,
