@@ -1,3 +1,4 @@
+#import os
 # search_engine.py
 # This file builds a FAISS index from our embeddings
 # and provides a function to search for relevant assessments.
@@ -103,29 +104,22 @@ def search_assessments(
 # STEP C: Initialize everything together
 # -------------------------------------------------------
 def initialize_search_system():
-    """
-    This function loads everything we need:
-    1. The CSV data
-    2. The AI embedding model
-    3. The FAISS index
-    
-    We call this ONCE when the server starts.
-    Then we reuse the same model and index for every search.
-    This is important — loading the model takes a few seconds,
-    so we don't want to reload it on every request!
-    """
+    import numpy as np
     print("🚀 Initializing search system...")
-    
-    # Load assessments from CSV
     df = load_assessments()
     
-    # Generate embeddings for all assessments
-    from data_loader import generate_embeddings
-    model, embeddings, texts = generate_embeddings(df)
+    # Try to load pre-computed embeddings first
+    if os.path.exists('embeddings.npy'):
+        print("📂 Loading pre-computed embeddings...")
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+        embeddings = np.load('embeddings.npy')
+        print(f"✅ Loaded embeddings with shape: {embeddings.shape}")
+    else:
+        from data_loader import generate_embeddings
+        model, embeddings, texts = generate_embeddings(df)
     
-    # Build FAISS index
     index = build_faiss_index(embeddings)
-    
     print("✅ Search system ready!")
     return model, index, df
 
