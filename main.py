@@ -1,4 +1,7 @@
 # main.py
+# This is the complete FastAPI application.
+# It connects data_loader, search_engine, and chatbot
+# into one working API with proper endpoints.
 import os
 import uuid
 from fastapi import FastAPI, HTTPException
@@ -7,61 +10,114 @@ from pydantic import BaseModel
 from typing import List, Optional
 from contextlib import asynccontextmanager
 
-from search_engine import initialize_search_system, search_assessments
-from chatbot import generate_response
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+from search_engine import initialize_search_system
+from chatbot import chat
 
 # -------------------------------------------------------
-# Request and Response Models
+# STEP A: Define request and response models
 # -------------------------------------------------------
-
-class Message(BaseModel):
-    role: str
-    content: str
+# These classes define exactly what JSON our API
+# accepts and returns. Pydantic validates everything
+# automatically — if the data is wrong format,
+# it returns a helpful error message.
 
 class ChatRequest(BaseModel):
-    messages: List[Message]
+    """
+    What the user sends TO our API.
+    
+    Example request body:
+    {
+        "message": "I need to hire a software engineer",
+        "conversation_id": "abc123",
+        "conversation_history": []
+    }
+    """
+    message: str
+    conversation_id: Optional[str] = None
+    conversation_history: Optional[List[dict]] = []
 
-class Recommendation(BaseModel):
+
+class AssessmentRecommendation(BaseModel):
+    """
+    One SHL assessment recommendation.
+    This is the exact format the assignment requires.
+    """
     name: str
-    url: str
+    description: str
+    job_levels: str
+    duration_minutes: int
     test_type: str
+    remote_testing: str
+    adaptive: str
+
 
 class ChatResponse(BaseModel):
-    reply: str
-    recommendations: List[Recommendation]
-    end_of_conversation: bool
+    """
+    What our API sends BACK to the user.
+    
+    Example response:
+    {
+        "response": "Based on your needs...",
+        "recommendations": [...],
+        "conversation_id": "abc123",
+        "message_count": 1
+    }
+    """
+    response: str
+    recommendations: List[AssessmentRecommendation]
+    conversation_id: str
+    message_count: int
+
 
 # -------------------------------------------------------
-# Global variables
+# STEP B: Global variables for our AI system
 # -------------------------------------------------------
-vectorizer = None
-tfidf_matrix = None
-assessments_df = None
+# We load the model and index ONCE when server starts.
+# This saves time — loading takes a few seconds,
+# so we don't want to reload on every request!
+
+ml_model = None      # sentence-transformer model
+faiss_index = None   # FAISS search index
+assessments_df = None  # our CSV data as a dataframe
+
 
 # -------------------------------------------------------
-# Lifespan
+# STEP C: Lifespan — runs on startup and shutdown
 # -------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global vectorizer, tfidf_matrix, assessments_df
+    """
+    This function runs when the server STARTS.
+    We use it to load our AI model and FAISS index
+    so they are ready before any requests come in.
+    """
+    global ml_model, faiss_index, assessments_df
+    
     print("🚀 Starting SHL Assessment Recommender...")
-    vectorizer, tfidf_matrix, assessments_df = initialize_search_system()
+    print("📊 Loading AI model and search index...")
+    
+    # Initialize everything
+    ml_model, faiss_index, assessments_df = initialize_search_system()
+    
     print("✅ Server ready to accept requests!")
-    yield
+    
+    yield  # Server runs here
+    
+    # Cleanup when server stops (optional)
     print("👋 Server shutting down...")
 
+
 # -------------------------------------------------------
-# FastAPI app
+# STEP D: Create FastAPI app
 # -------------------------------------------------------
 app = FastAPI(
     title="SHL Assessment Recommender",
-    description="AI-powered SHL assessment recommendation chatbot",
+    description="AI-powered chatbot that recommends SHL assessments for recruiters",
     version="1.0.0",
     lifespan=lifespan
 )
 
+# Allow requests from any origin (needed for web frontends)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -69,92 +125,142 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # -------------------------------------------------------
-# Endpoints
+# STEP E: Endpoints
 # -------------------------------------------------------
 
 @app.get("/")
 def home():
+    """Root endpoint — confirms API is running"""
     return {
         "message": "SHL Assessment Recommender API is running!",
         "version": "1.0.0",
         "endpoints": {
             "chat": "POST /chat",
             "health": "GET /health",
+            "assessments": "GET /assessments",
             "docs": "GET /docs"
         }
     }
 
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """
+    Health check endpoint.
+    Returns whether the AI model is loaded and ready.
+    """
+    return {
+        "status": "healthy",
+        "model_loaded": ml_model is not None,
+        "index_loaded": faiss_index is not None,
+        "assessments_loaded": assessments_df is not None,
+        "total_assessments": len(assessments_df) if assessments_df is not None else 0
+    }
+
+
+@app.get("/assessments")
+def get_all_assessments():
+    """
+    Returns all SHL assessments in our database.
+    Useful for browsing available assessments.
+    """
+    if assessments_df is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Assessment data not loaded yet"
+        )
+    
+    assessments = []
+    for _, row in assessments_df.iterrows():
+        assessments.append({
+            "name": row["name"],
+            "description": row["description"],
+            "job_levels": row["job_levels"],
+            "duration_minutes": int(row["duration_minutes"]),
+            "test_type": row["test_type"],
+            "remote_testing": row["remote_testing"],
+            "adaptive": row["adaptive"]
+        })
+    
+    return {
+        "total": len(assessments),
+        "assessments": assessments
+    }
+
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
-    if vectorizer is None:
+    """
+    Main chat endpoint — the heart of our application.
+    
+    Accepts a recruiter message and returns:
+    - AI response with recommendations
+    - List of recommended assessments
+    - Conversation ID for tracking
+    - Message count
+    
+    Example request:
+    {
+        "message": "I need to hire a software engineer",
+        "conversation_id": null,
+        "conversation_history": []
+    }
+    """
+    # Check if AI system is loaded
+    if ml_model is None or faiss_index is None:
         raise HTTPException(
             status_code=503,
-            detail="AI system not ready yet."
+            detail="AI system not ready yet. Please wait a moment."
         )
-
-    # Convert messages to history format
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
-
-    # Get the last user message
-    user_messages = [m for m in messages if m["role"] == "user"]
-    if not user_messages:
-        raise HTTPException(status_code=400, detail="No user message found")
-
-    last_user_message = user_messages[-1]["content"]
-
-    # Build conversation history (all except last message)
-    history = messages[:-1]
-
+    
+    # Generate conversation ID if not provided
+    # This helps track multi-turn conversations
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    
+    # Get conversation history (previous messages)
+    history = request.conversation_history or []
+    
+    # Count messages so far
+    message_count = len(history) // 2 + 1
+    
     try:
-        # Search for relevant assessments
-        search_results = search_assessments(
-            query=last_user_message,
-            model=vectorizer,
-            index=tfidf_matrix,
-            df=assessments_df,
-            top_k=5
-        )
-
-        # Generate AI response
-        ai_reply = generate_response(
-            user_message=last_user_message,
+        # Call our chatbot function
+        result = chat(
+            user_message=request.message,
             conversation_history=history,
-            search_results=search_results
+            model=ml_model,
+            index=faiss_index,
+            df=assessments_df
         )
-
-        # Format recommendations
-        recommendations = []
-        # Only include recommendations if AI has enough context
-        vague_words = ["what", "which", "tell me", "more", "clarify", "?"]
-        is_clarifying = any(word in ai_reply.lower() for word in vague_words) and len(ai_reply) < 300
-
-        if not is_clarifying:
-            for result in search_results[:5]:
-                recommendations.append(
-                    Recommendation(
-                        name=result["name"],
-                        url=result["url"],
-                        test_type=result["test_type"]
-                    )
+        
+        # Format recommendations to match our schema
+        formatted_recommendations = []
+        for rec in result["recommendations"]:
+            formatted_recommendations.append(
+                AssessmentRecommendation(
+                    name=rec["name"],
+                    description=rec["description"],
+                    job_levels=rec["job_levels"],
+                    duration_minutes=rec["duration_minutes"],
+                    test_type=rec["test_type"],
+                    remote_testing=rec["remote_testing"],
+                    adaptive=rec["adaptive"]
                 )
-
-        # Detect end of conversation
-        end_phrases = ["good luck", "best of luck", "happy hiring", "all the best"]
-        end_of_conversation = any(phrase in ai_reply.lower() for phrase in end_phrases)
-
+            )
+        
+        # Return the response
         return ChatResponse(
-            reply=ai_reply,
-            recommendations=recommendations,
-            end_of_conversation=end_of_conversation
+            response=result["response"],
+            recommendations=formatted_recommendations,
+            conversation_id=conversation_id,
+            message_count=message_count
         )
-
+    
     except Exception as e:
+        # If something goes wrong, return a helpful error
         raise HTTPException(
             status_code=500,
-            detail=f"Error: {str(e)}"
+            detail=f"Error generating response: {str(e)}"
         )
