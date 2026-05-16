@@ -11,7 +11,6 @@ from search_engine import search_assessments
 # Load our secret API key from the .env file
 load_dotenv()
 # Backup: set key directly (replace with your actual key)
-os.environ["GROQ_API_KEY"] = "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"
 # -------------------------------------------------------
 # STEP A: System Prompt
 # -------------------------------------------------------
