@@ -56,14 +56,16 @@ def search_assessments(query, model, index, df, top_k=5):
     for idx in top_indices:
         row = df.iloc[idx]
         results.append({
-            "name": row["name"],
-            "description": row["description"],
-            "job_levels": row["job_levels"],
-            "duration_minutes": int(row["duration_minutes"]),
-            "test_type": row["test_type"],
-            "remote_testing": row["remote_testing"],
-            "adaptive": row["adaptive"],
-            "similarity_score": round(float(similarities[idx]), 3)
+    "name": row["name"],
+    "description": row["description"],
+    "job_levels": row["job_levels"],
+    "duration_minutes": int(row["duration_minutes"]),
+    "test_type": row["test_type"],
+    "remote_testing": row["remote_testing"],
+    "adaptive": row["adaptive"],
+    "url": row["url"],
+    "similarity_score": round(float(similarities[idx]), 3)
+
         })
     
     return results
