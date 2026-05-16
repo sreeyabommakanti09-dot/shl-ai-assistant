@@ -3,6 +3,7 @@
 # It connects data_loader, search_engine, and chatbot
 # into one working API with proper endpoints.
 
+import os
 import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,8 @@ from contextlib import asynccontextmanager
 from search_engine import initialize_search_system
 from chatbot import chat
 
+# Reduce memory usage
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # -------------------------------------------------------
 # STEP A: Define request and response models
 # -------------------------------------------------------

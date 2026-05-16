@@ -57,7 +57,7 @@ def generate_embeddings(df: pd.DataFrame):
     
     # Load the pre-trained model
     # This downloads automatically on first run
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
     
     print("📝 Creating text for each assessment...")
     
