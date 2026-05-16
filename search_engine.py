@@ -1,91 +1,60 @@
-#import os
 # search_engine.py
-# This file builds a FAISS index from our embeddings
-# and provides a function to search for relevant assessments.
-
-import faiss
+import os
 import numpy as np
 import pandas as pd
-from data_loader import load_assessments, generate_embeddings
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# -------------------------------------------------------
-# STEP A: Build the FAISS index
-# -------------------------------------------------------
-def build_faiss_index(embeddings: np.ndarray):
-    """
-    Builds a FAISS index from our embeddings.
-    
-    Think of this like building a smart filing cabinet.
-    We put all 20 assessment vectors inside it.
-    Later we can ask it: "which vectors are closest to this query?"
-    
-    We use IndexFlatL2 which measures straight-line distance
-    between vectors. Simple and reliable for small datasets.
-    """
-    # Get the size of each embedding vector (384 in our case)
-    dimension = embeddings.shape[1]
-    
-    # Create a flat L2 index (L2 = straight line distance)
-    index = faiss.IndexFlatL2(dimension)
-    
-    # Add all our assessment embeddings to the index
-    # FAISS requires float32 format
-    index.add(embeddings.astype(np.float32))
-    
-    print(f"✅ FAISS index built with {index.ntotal} assessments")
-    return index
+def load_assessments(csv_path="shl_assessments.csv"):
+    df = pd.read_csv(csv_path)
+    print(f"✅ Loaded {len(df)} assessments from CSV")
+    return df
 
+def create_search_text(row):
+    return (
+        f"{row['name']} "
+        f"{row['description']} "
+        f"{row['job_levels']} "
+        f"{row['test_type']}"
+    )
 
-# -------------------------------------------------------
-# STEP B: Search the index
-# -------------------------------------------------------
-def search_assessments(
-    query: str,
-    model,
-    index,
-    df: pd.DataFrame,
-    top_k: int = 5
-):
-    """
-    Takes a recruiter's query (plain English text),
-    converts it to a vector, and finds the top_k
-    most similar assessments in the FAISS index.
+def initialize_search_system():
+    print("🚀 Initializing search system...")
+    df = load_assessments()
     
-    Parameters:
-        query   → the recruiter's question as a string
-        model   → our sentence-transformer model
-        index   → the FAISS index we built
-        df      → our dataframe with assessment details
-        top_k   → how many results to return (default 5)
+    # Create search texts
+    texts = [create_search_text(row) for _, row in df.iterrows()]
     
-    Returns:
-        A list of dictionaries, each with assessment details
-    """
-    # Step 1: Convert the query text into a vector
-    query_vector = model.encode([query])
-    
-    # Step 2: Search FAISS for the top_k closest vectors
-    # distances → how far each result is (lower = better match)
-    # indices   → which row numbers in our dataframe matched
-    distances, indices = index.search(
-        query_vector.astype(np.float32),
-        top_k
+    # Build TF-IDF vectorizer
+    vectorizer = TfidfVectorizer(
+        ngram_range=(1, 2),
+        stop_words='english',
+        max_features=5000
     )
     
-    # Step 3: Build results list
+    # Fit and transform
+    tfidf_matrix = vectorizer.fit_transform(texts)
+    
+    print("✅ Search system ready!")
+    return vectorizer, tfidf_matrix, df
+
+def search_assessments(query, model, index, df, top_k=5):
+    # model = vectorizer, index = tfidf_matrix
+    vectorizer = model
+    tfidf_matrix = index
+    
+    # Transform query
+    query_vector = vectorizer.transform([query])
+    
+    # Calculate similarities
+    similarities = cosine_similarity(query_vector, tfidf_matrix)[0]
+    
+    # Get top results
+    top_indices = similarities.argsort()[-top_k:][::-1]
+    
     results = []
-    for i, idx in enumerate(indices[0]):
-        # Skip invalid indices (shouldn't happen but safe to check)
-        if idx == -1:
-            continue
-            
-        # Get the assessment row from our dataframe
+    for idx in top_indices:
         row = df.iloc[idx]
-        
-        # Convert distance to a similarity score (0 to 1)
-        # Lower distance = higher similarity
-        similarity = float(1 / (1 + distances[0][i]))
-        
         results.append({
             "name": row["name"],
             "description": row["description"],
@@ -94,63 +63,7 @@ def search_assessments(
             "test_type": row["test_type"],
             "remote_testing": row["remote_testing"],
             "adaptive": row["adaptive"],
-            "similarity_score": round(similarity, 3)
+            "similarity_score": round(float(similarities[idx]), 3)
         })
     
     return results
-
-
-# -------------------------------------------------------
-# STEP C: Initialize everything together
-# -------------------------------------------------------
-def initialize_search_system():
-    import numpy as np
-    print("🚀 Initializing search system...")
-    df = load_assessments()
-    
-    # Try to load pre-computed embeddings first
-    if os.path.exists('embeddings.npy'):
-        print("📂 Loading pre-computed embeddings...")
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
-        embeddings = np.load('embeddings.npy')
-        print(f"✅ Loaded embeddings with shape: {embeddings.shape}")
-    else:
-        from data_loader import generate_embeddings
-        model, embeddings, texts = generate_embeddings(df)
-    
-    index = build_faiss_index(embeddings)
-    print("✅ Search system ready!")
-    return model, index, df
-
-
-# -------------------------------------------------------
-# STEP D: Test everything works
-# -------------------------------------------------------
-if __name__ == "__main__":
-    print("=" * 50)
-    print("Testing FAISS search engine...")
-    print("=" * 50)
-    
-    # Initialize the system
-    model, index, df = initialize_search_system()
-    
-    # Test queries — these simulate what a recruiter might type
-    test_queries = [
-        "I need a test for logical reasoning and problem solving",
-        "Looking for personality assessment for sales role",
-        "Assessment for customer service representative",
-        "Numerical and data analysis test for finance role",
-    ]
-    
-    for query in test_queries:
-        print(f"\n🔍 Query: '{query}'")
-        print("-" * 40)
-        
-        results = search_assessments(query, model, index, df, top_k=3)
-        
-        for i, result in enumerate(results):
-            print(f"  {i+1}. {result['name']}")
-            print(f"     Type: {result['test_type']}")
-            print(f"     Duration: {result['duration_minutes']} mins")
-            print(f"     Similarity: {result['similarity_score']}")
